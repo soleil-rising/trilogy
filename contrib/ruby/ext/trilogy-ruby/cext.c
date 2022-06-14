@@ -23,7 +23,7 @@ static ID id_socket, id_host, id_port, id_username, id_password, id_found_rows, 
     id_write_timeout, id_keepalive_enabled, id_keepalive_idle, id_keepalive_interval, id_keepalive_count,
     id_ivar_affected_rows, id_ivar_fields, id_ivar_last_insert_id, id_ivar_rows, id_ivar_query_time, id_password,
     id_database, id_ssl_ca, id_ssl_capath, id_ssl_cert, id_ssl_cipher, id_ssl_crl, id_ssl_crlpath, id_ssl_key,
-    id_ssl_mode, id_tls_ciphersuites, id_tls_min_version, id_tls_max_version;
+    id_ssl_mode, id_tls_ciphersuites, id_tls_min_version, id_tls_max_version, id_multiple_statements;
 
 struct trilogy_ctx {
     trilogy_conn_t conn;
@@ -406,6 +406,10 @@ static VALUE rb_trilogy_initialize(VALUE self, VALUE opts)
         connopt.flags |= TRILOGY_CAPABILITIES_FOUND_ROWS;
     }
 
+    if (RTEST(rb_hash_aref(opts, ID2SYM(id_multiple_statements)))) {
+      connopt.flags |= TRILOGY_CAPABILITIES_MULTI_STATEMENTS;
+    }
+
     if ((val = rb_hash_aref(opts, ID2SYM(id_ssl_ca))) != Qnil) {
         Check_Type(val, T_STRING);
         connopt.ssl_ca = StringValueCStr(val);
@@ -557,14 +561,15 @@ static VALUE read_query_error(struct read_query_state *args, int rc, const char 
     return Qundef;
 }
 
+static VALUE next_result(VALUE vargs);
 static VALUE execute_read_query(VALUE vargs)
 {
     struct read_query_state *args = (void *)vargs;
     struct trilogy_ctx *ctx = args->ctx;
     VALUE query = args->query;
 
-    struct timespec start;
-    get_timespec_monotonic(&start);
+    /* struct timespec start; */
+    /* get_timespec_monotonic(&start); */
 
     int rc = trilogy_query_send(&ctx->conn, RSTRING_PTR(query), RSTRING_LEN(query));
 
@@ -576,7 +581,26 @@ static VALUE execute_read_query(VALUE vargs)
         return read_query_error(args, rc, "trilogy_query_send");
     }
 
+    VALUE result = next_result(vargs);
+    VALUE result2;
+
+    if (ctx->conn.server_status & TRILOGY_SERVER_STATUS_MORE_RESULTS_EXISTS) {
+      result2 = next_result(vargs);
+    }
+
+    return result2;
+}
+
+static VALUE next_result(VALUE vargs)
+{
+    struct read_query_state *args = (void *)vargs;
+    struct trilogy_ctx *ctx = args->ctx;
+
     uint64_t column_count = 0;
+    int rc;
+
+    struct timespec start;
+    get_timespec_monotonic(&start);
 
     while (1) {
         rc = trilogy_query_recv(&ctx->conn, &column_count);
@@ -687,10 +711,6 @@ static VALUE execute_read_query(VALUE vargs)
             }
             rb_ary_push(rows, row);
         }
-    }
-
-    if (ctx->conn.server_status & TRILOGY_SERVER_STATUS_MORE_RESULTS_EXISTS) {
-        rb_raise(rb_cTrilogyError, "MORE_RESULTS_EXIST");
     }
 
     return result;
@@ -970,6 +990,7 @@ void Init_cext()
     id_tls_ciphersuites = rb_intern("tls_ciphersuites");
     id_tls_min_version = rb_intern("tls_min_version");
     id_tls_max_version = rb_intern("tls_max_version");
+    id_multiple_statements = rb_intern("multiple_statements");
 
     id_ivar_affected_rows = rb_intern("@affected_rows");
     id_ivar_fields = rb_intern("@fields");
