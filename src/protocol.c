@@ -282,6 +282,8 @@ int trilogy_parse_handshake_packet(const uint8_t *buff, size_t len, trilogy_hand
         }
 
         CHECKED(trilogy_reader_copy_buffer(&reader, remaining_auth_data_len, out_packet->scramble + 8));
+    } else if (auth_data_len == 0) {
+       CHECKED(trilogy_reader_copy_buffer(&reader, 13, out_packet->scramble + 8));
     } else {
         // only support 4.1 protocol or newer with secure connection
         return TRILOGY_PROTOCOL_VIOLATION;
